@@ -1,20 +1,7 @@
-from sklearn import datasets
 import cvxpy
 import random
 import numpy
 import matplotlib.pyplot as plt
-import collections
-
-
-def printProgressBar(iteration, total, delimiter=None, prefix="", suffix="", decimals=1, length=100, fill="█", printEnd="\r"):
-    if iteration == total or delimiter is None or iteration % (delimiter * (total / 100)) == 0:
-        percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
-        filledLength = int(length * iteration // total)
-        bar = fill * filledLength + "-" * (length - filledLength)
-        print("\r%s |%s| %s%% %s" % (prefix, bar, percent, suffix), end=printEnd)
-        # Print New Line on Complete
-        if iteration == total:
-            print()
 
 
 def supportVectorMachine(x_dataPoints, y_labels):
@@ -38,17 +25,6 @@ def supportVectorMachine(x_dataPoints, y_labels):
 
 
 def _unitTest():
-    print("Loading Files...")
-    x_dataPoints, y_labels = datasets.load_svmlight_file("InputFiles/a1a")
-
-    test = numpy.ones((10, 1))
-
-    print(cvxpy.sum(cvxpy.sum(test)))
-
-    return
-
-
-def _unitTest2():
     # generate toy training data
     N1 = 200  # number of positive instances
     N2 = 100  # number of negative instances
@@ -61,7 +37,7 @@ def _unitTest2():
     r2 = numpy.sqrt(3 * numpy.random.rand(N2, 1))  # Radius
     t2 = 2 * numpy.pi * numpy.random.rand(N2, 1)  # Angle
     data2 = numpy.concatenate((2.5 + r2 * numpy.cos(t2), 1.5 + r2 * numpy.sin(t2)), axis=1)  # points
-    ## generate toy testing data
+    # generate toy testing data
     Nt1 = 50  # number of positive instances
     Nt2 = 25  # number of negative instances
     D = 2  # feature dimension
@@ -78,7 +54,7 @@ def _unitTest2():
 
     w, b = supportVectorMachine(X, y)
 
-    ## visualize decision boundary for training data
+    # visualize decision boundary for training data
     d = 0.02
     x1 = numpy.arange(numpy.min(X[:, 0]), numpy.max(X[:, 0]), d)
     x2 = numpy.arange(numpy.min(X[:, 1]), numpy.max(X[:, 1]), d)
@@ -97,7 +73,7 @@ def _unitTest2():
     plt.title('Decision boundary and support vectors for training data')
     plt.legend((h1, h2, h3), ('+1', '-1', 'support vecs'))
 
-    ## visualize decision boundary for test data
+    # visualize decision boundary for test data
     Xt = numpy.concatenate((testdata1, testdata2), axis=0)
     yt = numpy.concatenate((numpy.ones((Nt1, 1)), - numpy.ones((Nt2, 1))), axis=0)
     xt1 = numpy.arange(numpy.min(Xt[:, 0]), numpy.max(Xt[:, 0]), d)
@@ -117,4 +93,4 @@ def _unitTest2():
 
 
 if __name__ == '__main__':
-    _unitTest2()
+    _unitTest()
