@@ -6,29 +6,33 @@ import pandas
 import matplotlib.pyplot as plt
 import sklearn
 from sklearn import svm
-from math import radians, cos, sin, asin, sqrt
+from sklearn.model_selection import cross_val_score, train_test_split
+from math import sqrt
 
 
 class L2SVM(object):
 
-    def __init__(self, x_trainDataPoints, y_trainLabels, K_allClassSet, lambda_regularizationController):
-        self._x_trainDataPoints = x_trainDataPoints
-        self._y_trainLabels = y_trainLabels
-        self._k_allClassSet = K_allClassSet
+    def __init__(self, k_allClassSet, lambda_regularizationController):
+        self._x_trainDataPoints = None
+        self._y_trainLabels = None
+        self._k_allClassSet = k_allClassSet
         self._lambda_regularizationController = lambda_regularizationController
 
-        self._w_weights = cvxpy.Variable((self._x_trainDataPoints.shape[1], len(self._k_allClassSet)))
+        self._w_weights = None
         self._b_biases = cvxpy.Variable(len(self._k_allClassSet))
-        self._b_biases.value = numpy.zeros(len(self._k_allClassSet))
 
-    def train(self):
+    def fit(self, x_trainDataPoints, y_trainLabels):
+        self._x_trainDataPoints = x_trainDataPoints
+        self._y_trainLabels = y_trainLabels
+        self._w_weights = cvxpy.Variable((self._x_trainDataPoints.shape[1], len(self._k_allClassSet)))
+
         print("Training...")
         delta = lambda a, b: int(bool(a - b)) * 1
 
         primalCost = 0.5 * cvxpy.sum_squares(self._w_weights)
-        hingeLoss_multiClass_withoutPsi = cvxpy.sum([cvxpy.pos(self._x_trainDataPoints[i] @ self._w_weights[:, j] - self._x_trainDataPoints[i] @ self._w_weights[:, self._y_trainLabels[i]] + delta(j, self._y_trainLabels[i])) for j in self._k_allClassSet for i in range(self._x_trainDataPoints.shape[0])]) / len(self._k_allClassSet)
+        hingeLoss = cvxpy.sum([cvxpy.pos(self._x_trainDataPoints[i] @ self._w_weights[:, j] - self._x_trainDataPoints[i] @ self._w_weights[:, self._y_trainLabels[i]] + delta(j, self._y_trainLabels[i])) for j in self._k_allClassSet for i in range(self._x_trainDataPoints.shape[0])])
 
-        trainingObjectiveFunction = cvxpy.Minimize(primalCost + self._lambda_regularizationController * hingeLoss_multiClass_withoutPsi)
+        trainingObjectiveFunction = cvxpy.Minimize(primalCost + self._lambda_regularizationController * hingeLoss)
 
         trainingProblem = cvxpy.Problem(trainingObjectiveFunction)
         trainingProblem.solve(solver="SCS")
@@ -36,42 +40,55 @@ class L2SVM(object):
         print("status:", trainingProblem.status)
         print("optimal value", trainingProblem.value)
         print("optimal var w =", self._w_weights.value, ", b =", self._b_biases.value)
+        return
 
-        return self._w_weights.value, self._b_biases.value
-
-    def predict(self, xt_testDataPoints, yt_testLabels=None):
+    def predict(self, xt_testDataPoints):
         print("Predicting...")
         ycap_predictedLabels = numpy.empty(xt_testDataPoints.shape[0], dtype=int)
         w = self._w_weights.value
-        b = self._b_biases.value
 
         for i in range(xt_testDataPoints.shape[0]):
             score = -math.inf
             for j in list(self._k_allClassSet)[::-1]:
-                newScore = xt_testDataPoints[i] @ w[:, j] + b[j]
+                newScore = xt_testDataPoints[i] @ w[:, j]
 
                 if newScore > score:
                     ycap_predictedLabels[i] = j
                     score = newScore
 
-        if yt_testLabels is not None:
-            # print("y=\n", yt_testLabels)
-            # print("ycap=\n", ycap_predictedLabels)
-            print("RMSE Loss: ", sqrt(sklearn.metrics.mean_squared_error(yt_testLabels, ycap_predictedLabels)))
-            print("Diff Ratio: ", numpy.sum(yt_testLabels != ycap_predictedLabels) / xt_testDataPoints.shape[0])
         return ycap_predictedLabels
 
+    def score(self, xt_testDataPoints, yt_testLabels):
+        ycap_predictedLabels = self.predict(xt_testDataPoints)
+        rmseVal = sqrt(sklearn.metrics.mean_squared_error(yt_testLabels, ycap_predictedLabels))
+        accuVal = numpy.sum(yt_testLabels == ycap_predictedLabels) / xt_testDataPoints.shape[0]
 
-    @staticmethod
-    def printProgressBar(iteration, total, delimiter=None, prefix="", suffix="", decimals=1, length=100, fill="█", printEnd="\r"):
-        if iteration == total or delimiter is None or iteration % (delimiter * (total / 100)) == 0:
-            percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
-            filledLength = int(length * iteration // total)
-            bar = fill * filledLength + "-" * (length - filledLength)
-            print("\r%s |%s| %s%% %s" % (prefix, bar, percent, suffix), end=printEnd)
-            # Print New Line on Complete
-            if iteration == total:
-                print()
+        return rmseVal, accuVal, ycap_predictedLabels
+
+    def crossValidation(self, x_trainDataPoints, y_trainLabels, folds=5, testSize=0.2):
+        x_train, x_val, y_train, y_val = train_test_split(x_trainDataPoints, y_trainLabels, test_size=testSize, random_state=1)
+        scores = []
+        pickedScore = [-math.inf, None]
+        foldSize = x_train.shape[0] // folds
+
+        for splitter in range(folds):
+            print("FOLD", splitter, "================================")
+            self.fit(x_train[splitter * foldSize:(splitter + 1) * foldSize, :], y_train[splitter * foldSize:(splitter + 1) * foldSize])
+            scores.append([self.score(x_val, y_val), self._w_weights, self._b_biases])
+            pickedScore = [scores[-1][0], splitter] if scores[-1][0] > pickedScore[0] else pickedScore
+
+        self._w_weights, self._b_biases = scores[pickedScore[1]][1], scores[pickedScore[1]][2]
+        print("CROSS VAL END============")
+
+        return [score[0] for score in scores]
+
+    @property
+    def viewWeights(self):
+        return self._w_weights
+
+    @property
+    def viewBiases(self):
+        return self._b_biases
 
 
 def main():
@@ -79,25 +96,28 @@ def main():
     trainFile = pandas.read_csv("InputFiles/train.csv")
     testFile = pandas.read_csv("InputFiles/test.csv")
 
-    offset = 0
-    x_trainDataPoints, y_trainLabels = trainFile.loc[:, ["x3", "y3", "x4", "y4", "x5", "y5", "x6", "y6"]].to_numpy() + offset, trainFile["Digit"].to_numpy()
-    xt_testDataPoints = testFile.loc[:, ["x3", "y3", "x4", "y4", "x5", "y5", "x6", "y6"]].to_numpy() + offset
+    x_trainDataPoints, y_trainLabels = trainFile.loc[:, "x3":"y6"].to_numpy(), trainFile["Digit"].to_numpy()
+    xt_testDataPoints = testFile.loc[:, "x3":"y6"].to_numpy()
 
-    trainPortion = int(x_trainDataPoints.shape[0]*1)
-    valPortion = int(x_trainDataPoints.shape[0]*0)
+    x_train, x_val, y_train, y_val = train_test_split(x_trainDataPoints, y_trainLabels, test_size=0.20, random_state=1)
 
     clf = svm.SVC(decision_function_shape='ovo')
-    clf.fit(x_trainDataPoints[:trainPortion], y_trainLabels[:trainPortion])
-    ycap_lib = clf.predict(x_trainDataPoints[valPortion:])
-    ytcap_lib = clf.predict(xt_testDataPoints)
-    print("RMSE Loss: ", sqrt(sklearn.metrics.mean_squared_error(y_trainLabels[valPortion:], ycap_lib)))
-    print("Diff Ratio: ", numpy.sum(y_trainLabels[valPortion:] != ycap_lib) / x_trainDataPoints.shape[0])
+    clf.fit(x_train, y_train)
+    ycap_lib = clf.predict(x_val)
+    print("RMSE Loss: ", sqrt(sklearn.metrics.mean_squared_error(y_val, ycap_lib)))
+    print("ACCU Ratio: ", numpy.sum(y_val == ycap_lib) / x_val.shape[0])
 
-    model = L2SVM(x_trainDataPoints[:trainPortion], y_trainLabels[:trainPortion], {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, lambda_regularizationController=0.05)
-    w = model.train()
-    ycap = model.predict(x_trainDataPoints[valPortion:], y_trainLabels[valPortion:])
+    model = L2SVM({0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, lambda_regularizationController=0.05)
+    model.fit(x_train, y_train)
+    valRMSEScore, valAccuScore, yvcap = model.score(x_val, y_val)
+    print("RMSE Loss: ", valRMSEScore)
+    print("ACCU Ratio: ", valAccuScore)
+
     ytcap = model.predict(xt_testDataPoints)
-    print(ytcap)
+
+    with open("OutputFiles/Yi-Chen Liu_preds_studentsdigits.txt", "w", encoding="utf-8") as outputFile:
+        for row in ytcap:
+            outputFile.write(str(row) + "\n")
 
     return
 
@@ -161,18 +181,22 @@ def _unitTest():
     ytcap_lib = clf.predict(xt)
     print("=====================Train=====================")
     print("RMSE Loss: ", sqrt(sklearn.metrics.mean_squared_error(y, ycap_lib)))
-    print("Diff Ratio: ", sqrt(numpy.sum(ycap_lib != y) / x.shape[0]))
+    print("ACCU Ratio: ", sqrt(numpy.sum(ycap_lib == y) / x.shape[0]))
     print("=====================Test======================")
     print("RMSE Loss: ", sklearn.metrics.mean_squared_error(yt, ytcap_lib))
-    print("Diff Ratio: ", numpy.sum(ytcap_lib != yt) / xt.shape[0])
+    print("ACCU Ratio: ", numpy.sum(ytcap_lib == yt) / xt.shape[0])
+    scores = cross_val_score(clf, x, y, cv=10, scoring='accuracy')
+    print(scores)
 
-    model = L2SVM(x, y, {0, 1, 2, 3}, lambda_regularizationController=0.5)
-    w, b = model.train()
-    ycap = model.predict(x, y)
-    ytcap = model.predict(xt, yt)
+    model = L2SVM({0, 1, 2, 3}, lambda_regularizationController=0.5)
+
+    scores = model.crossValidation(x, y, testSize=0.4, folds=5)
+    w, b = model.viewWeights, model.viewBiases
+    print(scores, w.value, b.value)
+    score = model.score(xt, yt)
 
     # visualize decision boundary for training data
-    vectorDrawingScalar = 1e1
+    vectorDrawingScalar = 1e12
     origin = [0], [0]
     y = lambda nv, c, x: (nv[0] * x - c) / (-nv[1])
 
@@ -184,7 +208,7 @@ def _unitTest():
     d4 = plt.scatter(data4[:, 0], data4[:, 1], s=15, marker=".", c="y")
 
     # Draw Weights as Vectors
-    plt.quiver(*origin, vectorDrawingScalar * w[0], vectorDrawingScalar * w[1], color=["r", "b", "g", "y"], scale=21)
+    plt.quiver(*origin, vectorDrawingScalar * w.value[0], vectorDrawingScalar * w.value[1], color=["r", "b", "g", "y"], scale=21)
 
     plt.legend((d1, d2, d3, d4), ("0", "1", "2", "3"))
 
@@ -197,7 +221,7 @@ def _unitTest():
     dt4 = plt.scatter(testdata4[:, 0], testdata4[:, 1], s=15, marker=".", c="y")
 
     # Draw Weights as Vectors
-    plt.quiver(*origin, vectorDrawingScalar * w[0], vectorDrawingScalar * w[1], color=["r", "b", "g", "y"], scale=21)
+    plt.quiver(*origin, vectorDrawingScalar * w.value[0], vectorDrawingScalar * w.value[1], color=["r", "b", "g", "y"], scale=21)
 
     plt.legend((dt1, dt2, dt3, dt4), ("0", "1", "2", "3"))
 
@@ -205,4 +229,5 @@ def _unitTest():
 
 
 if __name__ == '__main__':
+    print((1/0.20)*(4*math.log2((2/0.05))+8*9*math.log2(13/0.20)))
     main()

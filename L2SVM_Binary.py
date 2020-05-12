@@ -1,27 +1,115 @@
+import math
 import cvxpy
 import random
 import numpy
+import pandas
 import matplotlib.pyplot as plt
+import sklearn
+from sklearn import svm
+from sklearn.model_selection import cross_val_score, train_test_split
 
 
-def supportVectorMachine(x_dataPoints, y_labels):
-    w_weights = cvxpy.Variable((x_dataPoints.shape[1], 1))
-    b_baises = cvxpy.Variable()
-    lambda_regularizationController = 1
+class L2SVM_Binary(object):
 
-    print(x_dataPoints.shape[0])
+    def __init__(self, x_trainDataPoints, y_trainLabels, supportVectorCriteria):
+        self._w_weights = {
+            "source": cvxpy.Variable((x_trainDataPoints.shape[1], 1)),
+            "ht": cvxpy.Variable((x_trainDataPoints.shape[1], 1)),
+            "it": cvxpy.Variable((x_trainDataPoints.shape[1], 1))
+        }
 
-    primalCost = 0.5 * (cvxpy.norm(w_weights) ** 2)
-    hingeLoss = cvxpy.sum(cvxpy.pos(1 - cvxpy.multiply(y_labels, x_dataPoints @ w_weights + b_baises)))
+        self._b_biases = {
+            "source": cvxpy.Variable(),
+            "ht": cvxpy.Variable(),
+            "it": cvxpy.Variable()
+        }
 
-    objectiveFunction = cvxpy.Minimize(primalCost + lambda_regularizationController * hingeLoss)
+        self.fit(x_trainDataPoints, y_trainLabels, transferMode="source")
 
-    problem = cvxpy.Problem(objectiveFunction)
-    problem.solve()
-    print("status:", problem.status)
-    print("optimal value", problem.value)
-    print("optimal var w = {}, b = {}".format(w_weights.value, b_baises.value))
-    return w_weights, b_baises
+        dist = (y_trainLabels * (x_trainDataPoints.dot(self._w_weights["source"].value) + self._b_biases["source"].value)) - 1
+        self._xsv_supportVectorsDataPoints = x_trainDataPoints[((-supportVectorCriteria < dist) & (dist < supportVectorCriteria)).flatten(), :]
+        self._ysv_supportVectorsLabels = y_trainLabels[((-supportVectorCriteria < dist) & (dist < supportVectorCriteria)).flatten(), :]
+        print("# of SV:", self._xsv_supportVectorsDataPoints.shape[0])
+
+    def fit(self, x_trainDataPoints, y_trainLabels, transferMode="source"):
+        print("[", transferMode, "] Training...")
+        primalCost = 0.5 * cvxpy.sum_squares(self._w_weights[transferMode])
+        trainingObjectiveFunction = cvxpy.Minimize(primalCost)
+
+        if transferMode == "source":
+            constraints = [cvxpy.multiply(y_trainLabels, (x_trainDataPoints @ self._w_weights[transferMode] + self._b_biases[transferMode])) >= 1]
+        elif transferMode == "ht":
+            constraints = [
+                cvxpy.multiply(y_trainLabels, (x_trainDataPoints @ self._w_weights[transferMode] + self._b_biases[transferMode])) >= 1,
+                cvxpy.sum_squares((self._w_weights["source"].value - self._w_weights[transferMode])) <= 100
+            ]
+        elif transferMode == "it":
+            constraints = [
+                cvxpy.multiply(y_trainLabels, (x_trainDataPoints @ self._w_weights[transferMode] + self._b_biases[transferMode])) >= 1,
+                cvxpy.multiply(self._ysv_supportVectorsLabels, (self._xsv_supportVectorsDataPoints @ self._w_weights[transferMode] + self._b_biases[transferMode])) >= 1
+            ]
+        else:
+            return
+
+        trainingProblem = cvxpy.Problem(trainingObjectiveFunction, constraints)
+        trainingProblem.solve()
+
+        print("status:", trainingProblem.status)
+        print("optimal value", trainingProblem.value)
+        print("optimal var w =", self._w_weights[transferMode].value, ", b =", self._b_biases[transferMode].value)
+
+    def predict(self, xt_testDataPoints, transferMode="source"):
+        print("[", transferMode, "] Predicting...")
+        return 2 * (xt_testDataPoints @ self._w_weights[transferMode].value + self._b_biases[transferMode].value > 0).astype(int) - 1
+
+    def score(self, xt_testDataPoints, yt_testLabels):
+        rmseVal, scoreVal = {}, {}
+        ycap_predictedLabels = {
+            "source": self.predict(xt_testDataPoints, transferMode="source"),
+            "ht": self.predict(xt_testDataPoints, transferMode="ht"),
+            "it": self.predict(xt_testDataPoints, transferMode="it")
+        }
+
+        for methods in ycap_predictedLabels.keys():
+            rmseVal[methods] = math.sqrt(sklearn.metrics.mean_squared_error(yt_testLabels, ycap_predictedLabels[methods]))
+            scoreVal[methods] = numpy.sum(yt_testLabels == ycap_predictedLabels[methods]) / xt_testDataPoints.shape[0]
+            print("=======================")
+            print(methods + "- RMSE Loss: ", rmseVal[methods])
+            print(methods + "- ACCU Ratio: ", scoreVal[methods])
+
+        return scoreVal
+
+    @property
+    def viewWeights(self):
+        return self._w_weights
+
+    @property
+    def viewBiases(self):
+        return self._b_biases
+
+
+def main():
+    print("Loading Files...")
+    trainFile = pandas.read_csv("InputFiles/train.csv")
+
+    xs_sourceDataPoints, ys_sourceLabels = trainFile.loc[trainFile["Digit"].isin({1, 9}), "x3": "y6"].to_numpy(), trainFile.loc[trainFile["Digit"].isin({1, 9}), "Digit"].replace(9, -1).to_numpy()
+    xt_targetDataPoints, yt_targetLabels = trainFile.loc[trainFile["Digit"].isin({1, 7}), "x3": "y6"].to_numpy(), trainFile.loc[trainFile["Digit"].isin({1, 7}), "Digit"].replace(7, -1).to_numpy()
+
+    ys_sourceLabels = ys_sourceLabels.reshape((ys_sourceLabels.shape[0], 1))
+    yt_targetLabels = yt_targetLabels.reshape((yt_targetLabels.shape[0], 1))
+
+    xs_train, xs_val, ys_train, ys_val = train_test_split(xs_sourceDataPoints, ys_sourceLabels, test_size=0.97, random_state=1)
+    xt_train, xt_val, yt_train, yt_val = train_test_split(xt_targetDataPoints, yt_targetLabels, test_size=0.99, random_state=1)
+
+    model = L2SVM_Binary(xs_train, ys_train, supportVectorCriteria=1)
+    model.fit(xt_train, yt_train, transferMode="ht")
+    model.fit(xt_train, yt_train, transferMode="it")
+    model.fit(xt_train, yt_train, transferMode="source")
+
+    model.score(xs_val, ys_val)
+    model.score(xt_targetDataPoints, yt_targetLabels)
+
+    return
 
 
 def _unitTest():
@@ -29,11 +117,11 @@ def _unitTest():
     N1 = 200  # number of positive instances
     N2 = 100  # number of negative instances
     D = 2  # feature dimension
-    eps = 1e-8  # select support vectors
+    eps = 1  # select support vectors
     random.seed(1)  # For reproducibility
     r1 = numpy.sqrt(1.5 * numpy.random.rand(N1, 1))  # Radius
     t1 = 2 * numpy.pi * numpy.random.rand(N1, 1)  # Angle
-    data1 = numpy.concatenate((r1 * numpy.cos(t1), r1 * numpy.sin(t1)), axis=1)  # Points
+    data1 = numpy.concatenate((r1 * numpy.cos(t1), 3 + r1 * numpy.sin(t1)), axis=1)  # Points
     r2 = numpy.sqrt(3 * numpy.random.rand(N2, 1))  # Radius
     t2 = 2 * numpy.pi * numpy.random.rand(N2, 1)  # Angle
     data2 = numpy.concatenate((2.5 + r2 * numpy.cos(t2), 1.5 + r2 * numpy.sin(t2)), axis=1)  # points
@@ -44,7 +132,7 @@ def _unitTest():
     random.seed(1)  # For reproducibility
     r1 = numpy.sqrt(3.4 * numpy.random.rand(Nt1, 1))  # Radius
     t1 = 2 * numpy.pi * numpy.random.rand(Nt1, 1)  # Angle
-    testdata1 = numpy.concatenate((r1 * numpy.cos(t1), r1 * numpy.sin(t1)), axis=1)  # Points
+    testdata1 = numpy.concatenate((r1 * numpy.cos(t1), 3.25 + r1 * numpy.sin(t1)), axis=1)  # Points
     r2 = numpy.sqrt(2.4 * numpy.random.rand(Nt2, 1))  # Radius
     t2 = 2 * numpy.pi * numpy.random.rand(Nt2, 1)  # Angle
     testdata2 = numpy.concatenate((3 + r2 * numpy.cos(t2), r2 * numpy.sin(t2)), axis=1)  # points
@@ -52,7 +140,14 @@ def _unitTest():
     X = numpy.concatenate((data1, data2), axis=0)
     y = numpy.concatenate((numpy.ones((N1, 1)), - numpy.ones((N2, 1))), axis=0)
 
-    w, b = supportVectorMachine(X, y)
+    Xt = numpy.concatenate((testdata1, testdata2), axis=0)
+    yt = numpy.concatenate((numpy.ones((Nt1, 1)), - numpy.ones((Nt2, 1))), axis=0)
+
+    model = L2SVM_Binary(X, y, eps)
+    w, b = model.viewWeights["source"], model.viewBiases["source"]
+    model.fit(X, y, transferMode="ht")
+    model.fit(X, y, transferMode="it")
+    model.score(Xt, yt)
 
     # visualize decision boundary for training data
     d = 0.02
@@ -74,8 +169,6 @@ def _unitTest():
     plt.legend((h1, h2, h3), ('+1', '-1', 'support vecs'))
 
     # visualize decision boundary for test data
-    Xt = numpy.concatenate((testdata1, testdata2), axis=0)
-    yt = numpy.concatenate((numpy.ones((Nt1, 1)), - numpy.ones((Nt2, 1))), axis=0)
     xt1 = numpy.arange(numpy.min(Xt[:, 0]), numpy.max(Xt[:, 0]), d)
     xt2 = numpy.arange(numpy.min(Xt[:, 1]), numpy.max(Xt[:, 1]), d)
     xt1Grid, xt2Grid = numpy.meshgrid(xt1, xt2)
@@ -93,4 +186,4 @@ def _unitTest():
 
 
 if __name__ == '__main__':
-    _unitTest()
+    main()
