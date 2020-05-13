@@ -49,7 +49,7 @@ class L2SVM(object):
 
         for i in range(xt_testDataPoints.shape[0]):
             score = -math.inf
-            for j in list(self._k_allClassSet)[::-1]:
+            for j in self._k_allClassSet:
                 newScore = xt_testDataPoints[i] @ w[:, j]
 
                 if newScore > score:
@@ -74,7 +74,8 @@ class L2SVM(object):
         for splitter in range(folds):
             print("FOLD", splitter, "================================")
             self.fit(x_train[splitter * foldSize:(splitter + 1) * foldSize, :], y_train[splitter * foldSize:(splitter + 1) * foldSize])
-            scores.append([self.score(x_val, y_val), self._w_weights, self._b_biases])
+            rmseVal, accuVal, ycap_predictedLabels = self.score(x_val, y_val)
+            scores.append([accuVal, self._w_weights, self._b_biases])
             pickedScore = [scores[-1][0], splitter] if scores[-1][0] > pickedScore[0] else pickedScore
 
         self._w_weights, self._b_biases = scores[pickedScore[1]][1], scores[pickedScore[1]][2]
@@ -188,12 +189,13 @@ def _unitTest():
     scores = cross_val_score(clf, x, y, cv=10, scoring='accuracy')
     print(scores)
 
-    model = L2SVM({0, 1, 2, 3}, lambda_regularizationController=0.5)
+    model = L2SVM({0, 1, 2, 3}, lambda_regularizationController=0.02)
 
-    scores = model.crossValidation(x, y, testSize=0.4, folds=5)
+    scores = model.crossValidation(x, y, testSize=0.4, folds=1)
     w, b = model.viewWeights, model.viewBiases
     print(scores, w.value, b.value)
     score = model.score(xt, yt)
+    print(score[1])
 
     # visualize decision boundary for training data
     vectorDrawingScalar = 1e12
@@ -229,5 +231,4 @@ def _unitTest():
 
 
 if __name__ == '__main__':
-    print((1/0.20)*(4*math.log2((2/0.05))+8*9*math.log2(13/0.20)))
     main()
