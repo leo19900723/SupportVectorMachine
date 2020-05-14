@@ -5,13 +5,12 @@ import numpy
 import pandas
 import matplotlib.pyplot as plt
 import sklearn
-from sklearn import svm
-from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.model_selection import train_test_split
 
 
 class L2SVM_Binary(object):
 
-    def __init__(self, x_trainDataPoints, y_trainLabels, supportVectorCriteria):
+    def __init__(self, x_trainDataPoints, y_trainLabels, supportVectorCriteria, lambda_regularizationController):
         self._w_weights = {
             "source": cvxpy.Variable((x_trainDataPoints.shape[1], 1)),
             "ht": cvxpy.Variable((x_trainDataPoints.shape[1], 1)),
@@ -24,6 +23,8 @@ class L2SVM_Binary(object):
             "it": cvxpy.Variable()
         }
 
+        self._lambda_regularizationController = lambda_regularizationController
+
         self.fit(x_trainDataPoints, y_trainLabels, transferMode="source")
 
         dist = (y_trainLabels * (x_trainDataPoints.dot(self._w_weights["source"].value) + self._b_biases["source"].value)) - 1
@@ -31,46 +32,36 @@ class L2SVM_Binary(object):
         self._ysv_supportVectorsLabels = y_trainLabels[((-supportVectorCriteria < dist) & (dist < supportVectorCriteria)).flatten(), :]
         print("# of SV:", self._xsv_supportVectorsDataPoints.shape[0])
 
-    def fit(self, x_trainDataPoints, y_trainLabels, transferMode="source"):
+    def fit(self, x_trainDataPoints, y_trainLabels, transferMode):
         print("[", transferMode, "] Training...")
+        e_softError = cvxpy.Variable((x_trainDataPoints.shape[0], 1))
         primalCost = 0.5 * cvxpy.sum_squares(self._w_weights[transferMode])
-        trainingObjectiveFunction = cvxpy.Minimize(primalCost)
 
-        if transferMode == "source":
-            constraints = [cvxpy.multiply(y_trainLabels, (x_trainDataPoints @ self._w_weights[transferMode] + self._b_biases[transferMode])) >= 1]
-        elif transferMode == "ht":
-            constraints = [
-                cvxpy.multiply(y_trainLabels, (x_trainDataPoints @ self._w_weights[transferMode] + self._b_biases[transferMode])) >= 1,
-                cvxpy.sum_squares((self._w_weights["source"].value - self._w_weights[transferMode])) <= 100
-            ]
+        trainingObjectiveFunction = cvxpy.Minimize(primalCost + self._lambda_regularizationController * cvxpy.sum(e_softError))
+
+        constraints = [cvxpy.multiply(y_trainLabels, (x_trainDataPoints @ self._w_weights[transferMode] + self._b_biases[transferMode])) >= 1 - e_softError, e_softError >= 0]
+        if transferMode == "ht":
+            constraints.append(cvxpy.sum_squares((self._w_weights["source"].value - self._w_weights[transferMode])) <= 100)
         elif transferMode == "it":
-            constraints = [
-                cvxpy.multiply(y_trainLabels, (x_trainDataPoints @ self._w_weights[transferMode] + self._b_biases[transferMode])) >= 1,
-                cvxpy.multiply(self._ysv_supportVectorsLabels, (self._xsv_supportVectorsDataPoints @ self._w_weights[transferMode] + self._b_biases[transferMode])) >= 1
-            ]
-        else:
-            return
+            constraints.append(cvxpy.multiply(self._ysv_supportVectorsLabels, (self._xsv_supportVectorsDataPoints @ self._w_weights[transferMode] + self._b_biases[transferMode])) >= 1)
 
         trainingProblem = cvxpy.Problem(trainingObjectiveFunction, constraints)
-        trainingProblem.solve()
+        trainingProblem.solve(solver="SCS")
 
         print("status:", trainingProblem.status)
         print("optimal value", trainingProblem.value)
-        print("optimal var w =", self._w_weights[transferMode].value, ", b =", self._b_biases[transferMode].value)
 
-    def predict(self, xt_testDataPoints, transferMode="source"):
+    def predict(self, xt_testDataPoints, transferMode):
         print("[", transferMode, "] Predicting...")
         return 2 * (xt_testDataPoints @ self._w_weights[transferMode].value + self._b_biases[transferMode].value > 0).astype(int) - 1
 
-    def score(self, xt_testDataPoints, yt_testLabels):
+    def score(self, xt_testDataPoints, yt_testLabels, transferMode=None):
         rmseVal, scoreVal = {}, {}
-        ycap_predictedLabels = {
-            "source": self.predict(xt_testDataPoints, transferMode="source"),
-            "ht": self.predict(xt_testDataPoints, transferMode="ht"),
-            "it": self.predict(xt_testDataPoints, transferMode="it")
-        }
+        ycap_predictedLabels = {"source": None, "ht": None, "it": None}
 
-        for methods in ycap_predictedLabels.keys():
+        for methods in (ycap_predictedLabels.keys() if transferMode is None else {transferMode}):
+            ycap_predictedLabels[methods] = self.predict(xt_testDataPoints, transferMode=methods)
+
             rmseVal[methods] = math.sqrt(sklearn.metrics.mean_squared_error(yt_testLabels, ycap_predictedLabels[methods]))
             scoreVal[methods] = numpy.sum(yt_testLabels == ycap_predictedLabels[methods]) / xt_testDataPoints.shape[0]
             print("=======================")
@@ -98,15 +89,15 @@ def main():
     ys_sourceLabels = ys_sourceLabels.reshape((ys_sourceLabels.shape[0], 1))
     yt_targetLabels = yt_targetLabels.reshape((yt_targetLabels.shape[0], 1))
 
-    xs_train, xs_val, ys_train, ys_val = train_test_split(xs_sourceDataPoints, ys_sourceLabels, test_size=0.97, random_state=1)
-    xt_train, xt_val, yt_train, yt_val = train_test_split(xt_targetDataPoints, yt_targetLabels, test_size=0.99, random_state=1)
+    xs_train, xs_val, ys_train, ys_val = train_test_split(xs_sourceDataPoints, ys_sourceLabels, test_size=0.2, random_state=1)
+    xt_train, xt_val, yt_train, yt_val = train_test_split(xt_targetDataPoints, yt_targetLabels, test_size=0.3, random_state=1)
 
-    model = L2SVM_Binary(xs_train, ys_train, supportVectorCriteria=1)
+    model = L2SVM_Binary(xs_train, ys_train, supportVectorCriteria=1, lambda_regularizationController=0.05)
     model.fit(xt_train, yt_train, transferMode="ht")
     model.fit(xt_train, yt_train, transferMode="it")
     model.fit(xt_train, yt_train, transferMode="source")
 
-    model.score(xs_val, ys_val)
+    model.score(xt_val, yt_val)
     model.score(xt_targetDataPoints, yt_targetLabels)
 
     return
@@ -117,7 +108,7 @@ def _unitTest():
     N1 = 200  # number of positive instances
     N2 = 100  # number of negative instances
     D = 2  # feature dimension
-    eps = 1  # select support vectors
+    eps = 1e-8  # select support vectors
     random.seed(1)  # For reproducibility
     r1 = numpy.sqrt(1.5 * numpy.random.rand(N1, 1))  # Radius
     t1 = 2 * numpy.pi * numpy.random.rand(N1, 1)  # Angle
@@ -143,7 +134,7 @@ def _unitTest():
     Xt = numpy.concatenate((testdata1, testdata2), axis=0)
     yt = numpy.concatenate((numpy.ones((Nt1, 1)), - numpy.ones((Nt2, 1))), axis=0)
 
-    model = L2SVM_Binary(X, y, eps)
+    model = L2SVM_Binary(X, y, eps, 0.02)
     w, b = model.viewWeights["source"], model.viewBiases["source"]
     model.fit(X, y, transferMode="ht")
     model.fit(X, y, transferMode="it")
