@@ -19,7 +19,6 @@ class L2SVM(object):
         self._lambda_regularizationController = lambda_regularizationController
 
         self._w_weights = None
-        self._b_biases = cvxpy.Variable(len(self._k_allClassSet))
 
     def fit(self, x_trainDataPoints, y_trainLabels):
         self._x_trainDataPoints = x_trainDataPoints
@@ -39,7 +38,7 @@ class L2SVM(object):
 
         print("status:", trainingProblem.status)
         print("optimal value", trainingProblem.value)
-        print("optimal var w =", self._w_weights.value, ", b =", self._b_biases.value)
+        print("optimal var w =", self._w_weights.value)
         return
 
     def predict(self, xt_testDataPoints):
@@ -75,10 +74,10 @@ class L2SVM(object):
             print("FOLD", splitter, "================================")
             self.fit(x_train[splitter * foldSize:(splitter + 1) * foldSize, :], y_train[splitter * foldSize:(splitter + 1) * foldSize])
             rmseVal, accuVal, ycap_predictedLabels = self.score(x_val, y_val)
-            scores.append([accuVal, self._w_weights, self._b_biases])
+            scores.append([accuVal, self._w_weights])
             pickedScore = [scores[-1][0], splitter] if scores[-1][0] > pickedScore[0] else pickedScore
 
-        self._w_weights, self._b_biases = scores[pickedScore[1]][1], scores[pickedScore[1]][2]
+        self._w_weights = scores[pickedScore[1]][1]
         print("CROSS VAL END============")
 
         return [score[0] for score in scores]
@@ -86,10 +85,6 @@ class L2SVM(object):
     @property
     def viewWeights(self):
         return self._w_weights
-
-    @property
-    def viewBiases(self):
-        return self._b_biases
 
 
 def main():
@@ -102,12 +97,14 @@ def main():
 
     x_train, x_val, y_train, y_val = train_test_split(x_trainDataPoints, y_trainLabels, test_size=0.20, random_state=1)
 
-    clf = svm.SVC(decision_function_shape='ovo')
+    print("Using sklearn w/o kernel...")
+    clf = svm.SVC(decision_function_shape="ovr", kernel="linear")
     clf.fit(x_train, y_train)
     ycap_lib = clf.predict(x_val)
     print("RMSE Loss: ", sqrt(sklearn.metrics.mean_squared_error(y_val, ycap_lib)))
     print("ACCU Ratio: ", numpy.sum(y_val == ycap_lib) / x_val.shape[0])
 
+    print("Using My SVM...")
     model = L2SVM({0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, lambda_regularizationController=0.05)
     model.fit(x_train, y_train)
     valRMSEScore, valAccuScore, yvcap = model.score(x_val, y_val)
@@ -115,10 +112,23 @@ def main():
     print("ACCU Ratio: ", valAccuScore)
 
     ytcap = model.predict(xt_testDataPoints)
-
     with open("OutputFiles/Yi-Chen Liu_preds_studentsdigits.txt", "w", encoding="utf-8") as outputFile:
         for row in ytcap:
             outputFile.write(str(row) + "\n")
+        outputFile.close()
+
+    print("Using sklearn w/ kernel...")
+    clf = svm.SVC(decision_function_shape="ovr", kernel="rbf")
+    clf.fit(x_train, y_train)
+    ycap_lib = clf.predict(x_val)
+    print("RMSE Loss: ", sqrt(sklearn.metrics.mean_squared_error(y_val, ycap_lib)))
+    print("ACCU Ratio: ", numpy.sum(y_val == ycap_lib) / x_val.shape[0])
+
+    ytcap_kernel = clf.predict(xt_testDataPoints)
+    with open("OutputFiles/Yi-Chen Liu_preds_studentsdigits_kernel.txt", "w", encoding="utf-8") as outputFile:
+        for row in ytcap_kernel:
+            outputFile.write(str(row) + "\n")
+        outputFile.close()
 
     return
 
@@ -176,8 +186,11 @@ def _unitTest():
     xt = numpy.concatenate((testdata1, testdata2, testdata3, testdata4), axis=0)
     yt = numpy.array([0 for _ in range(Nt1)] + [1 for _ in range(Nt2)] + [2 for _ in range(Nt3)] + [3 for _ in range(Nt4)])
 
-    clf = svm.SVC(decision_function_shape='ovo')
+    print("Using sklearn w/o kernel...")
+    clf = svm.SVC(decision_function_shape="ovr", kernel="linear")
     clf.fit(x, y)
+    print("=====================CVS=======================")
+    print("CVS score: ", cross_val_score(clf, x, y, cv=5, scoring='accuracy'))
     ycap_lib = clf.predict(x)
     ytcap_lib = clf.predict(xt)
     print("=====================Train=====================")
@@ -186,16 +199,21 @@ def _unitTest():
     print("=====================Test======================")
     print("RMSE Loss: ", sklearn.metrics.mean_squared_error(yt, ytcap_lib))
     print("ACCU Ratio: ", numpy.sum(ytcap_lib == yt) / xt.shape[0])
-    scores = cross_val_score(clf, x, y, cv=10, scoring='accuracy')
-    print(scores)
 
+    print("Using My SVM...")
     model = L2SVM({0, 1, 2, 3}, lambda_regularizationController=0.02)
 
-    scores = model.crossValidation(x, y, testSize=0.4, folds=1)
-    w, b = model.viewWeights, model.viewBiases
-    print(scores, w.value, b.value)
-    score = model.score(xt, yt)
-    print(score[1])
+    print("=====================CVS=======================")
+    print("CVS score: ", model.crossValidation(x, y, testSize=0.4, folds=1))
+    score = model.score(x, y)
+    scoreT = model.score(xt, yt)
+    print("=====================Train=====================")
+    print("RMSE Loss: ", score[0])
+    print("ACCU Ratio: ", score[1])
+    print("=====================Test=====================")
+    print("RMSE Loss: ", scoreT[0])
+    print("ACCU Ratio: ", scoreT[1])
+    w = model.viewWeights
 
     # visualize decision boundary for training data
     vectorDrawingScalar = 1e12

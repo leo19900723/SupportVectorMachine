@@ -37,13 +37,34 @@ class L2SVM_Binary(object):
         e_softError = cvxpy.Variable((x_trainDataPoints.shape[0], 1))
         primalCost = 0.5 * cvxpy.sum_squares(self._w_weights[transferMode])
 
-        trainingObjectiveFunction = cvxpy.Minimize(primalCost + self._lambda_regularizationController * cvxpy.sum(e_softError))
+        if transferMode == "source":
+            constraints = [
+                cvxpy.multiply(y_trainLabels, (x_trainDataPoints @ self._w_weights[transferMode] + self._b_biases[transferMode])) >= 1 - e_softError,
+                e_softError >= 0
+            ]
 
-        constraints = [cvxpy.multiply(y_trainLabels, (x_trainDataPoints @ self._w_weights[transferMode] + self._b_biases[transferMode])) >= 1 - e_softError, e_softError >= 0]
-        if transferMode == "ht":
-            constraints.append(cvxpy.sum_squares((self._w_weights["source"].value - self._w_weights[transferMode])) <= 100)
+            trainingObjectiveFunction = cvxpy.Minimize(primalCost + self._lambda_regularizationController * cvxpy.sum(e_softError))
+        elif transferMode == "ht":
+            constraints = [
+                cvxpy.multiply(y_trainLabels, (x_trainDataPoints @ self._w_weights[transferMode] + self._b_biases[transferMode])) >= 1 - e_softError,
+                e_softError >= 0,
+                cvxpy.sum_squares((self._w_weights["source"].value - self._w_weights[transferMode])) <= 100
+            ]
+
+            trainingObjectiveFunction = cvxpy.Minimize(primalCost + self._lambda_regularizationController * cvxpy.sum(e_softError))
         elif transferMode == "it":
-            constraints.append(cvxpy.multiply(self._ysv_supportVectorsLabels, (self._xsv_supportVectorsDataPoints @ self._w_weights[transferMode] + self._b_biases[transferMode])) >= 1)
+            es_sourceSoftError = cvxpy.Variable((self._xsv_supportVectorsDataPoints.shape[0], 1))
+
+            constraints = [
+                cvxpy.multiply(y_trainLabels, (x_trainDataPoints @ self._w_weights[transferMode] + self._b_biases[transferMode])) >= 1 - e_softError,
+                e_softError >= 0,
+                cvxpy.multiply(self._ysv_supportVectorsLabels, (self._xsv_supportVectorsDataPoints @ self._w_weights[transferMode] + self._b_biases[transferMode])) >= 1 - es_sourceSoftError,
+                es_sourceSoftError >= 0
+            ]
+
+            trainingObjectiveFunction = cvxpy.Minimize(primalCost + self._lambda_regularizationController * cvxpy.sum(e_softError) + self._lambda_regularizationController * cvxpy.sum(es_sourceSoftError))
+        else:
+            return
 
         trainingProblem = cvxpy.Problem(trainingObjectiveFunction, constraints)
         trainingProblem.solve(solver="SCS")
